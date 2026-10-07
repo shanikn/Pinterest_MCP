@@ -2,6 +2,8 @@ import json
 import time
 from urllib.parse import urlencode
 
+import httpx
+
 from pinterest_mcp import config
 
 
@@ -35,3 +37,33 @@ def build_auth_url(state: str) -> str:
     }
     query = urlencode(params)
     return f"{config.AUTH_URL}?{query}"
+
+
+def _request_tokens(fields: dict) -> dict:
+    """POST to Pinterest's token endpoint, save the tokens it returns, and return them."""
+    response = httpx.post(
+        config.TOKEN_URL,
+        data=fields,
+        auth=(config.APP_ID, config.APP_SECRET),
+        timeout=30,
+    )
+    response.raise_for_status()
+    save_tokens(response.json())
+    return load_tokens()
+
+
+def exchange_code(code: str) -> dict:
+    """First login: trade the code from the redirect for tokens."""
+    return _request_tokens({
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": config.REDIRECT_URI,
+    })
+
+
+def refresh(refresh_token: str) -> dict:
+    """Renewal: trade the refresh token for a new access token."""
+    return _request_tokens({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+    })
