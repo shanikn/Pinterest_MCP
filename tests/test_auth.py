@@ -1,5 +1,9 @@
 import base64
-from urllib.parse import parse_qsl
+import socket
+import threading
+import urllib.error
+import urllib.request
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import httpx
 import pytest
@@ -65,3 +69,72 @@ def test_refresh_without_new_refresh_token_keeps_the_old_one(token_endpoint):
     assert tokens["access_token"] == "access-2"
     assert tokens["refresh_token"] == "refresh-1"
     assert tokens["refresh_expires_at"] == first["refresh_expires_at"]
+
+
+# --- login flow: a fake browser follows the auth URL back to the local server ---
+
+
+@pytest.fixture
+def redirect_uri(monkeypatch):
+    """A free local port, so the test never clashes with a real login on 8085."""
+    with socket.socket() as s:
+        s.bind(("localhost", 0))
+        port = s.getsockname()[1]
+    uri = f"http://localhost:{port}/callback"
+    monkeypatch.setattr(config, "REDIRECT_URI", uri)
+    return uri
+
+
+def fake_browser(monkeypatch, reply):
+    """webbrowser.open stand-in: GETs the redirect URI with the query reply(auth_params) builds."""
+    opened = []
+
+    def visit(url):
+        params = dict(parse_qsl(urlsplit(url).query))
+        opened.append(params)
+        # 127.0.0.1, not localhost: on Windows a refused ::1 attempt first costs ~2 s per request
+        base = params["redirect_uri"].replace("localhost", "127.0.0.1")
+
+        def go():
+            for path in (base.replace("/callback", "/favicon.ico"), f"{base}?{urlencode(reply(params))}"):
+                try:
+                    urllib.request.urlopen(path, timeout=5).read()
+                except urllib.error.HTTPError:
+                    pass  # the favicon 404
+        threading.Thread(target=go, daemon=True).start()
+        return True
+
+    monkeypatch.setattr(auth.webbrowser, "open", visit)
+    return opened
+
+
+def test_login_saves_tokens(token_endpoint, token_file, redirect_uri, monkeypatch):
+    token_endpoint.mock(return_value=httpx.Response(200, json=TOKEN_REPLY))
+    opened = fake_browser(monkeypatch, lambda p: {"code": "the-code", "state": p["state"]})
+    auth.login()
+    assert opened[0]["redirect_uri"] == redirect_uri
+    assert sent_form(token_endpoint)["code"] == "the-code"
+    assert auth.load_tokens()["access_token"] == "access-1"
+
+
+def test_login_rejects_wrong_state(token_endpoint, token_file, redirect_uri, monkeypatch):
+    fake_browser(monkeypatch, lambda p: {"code": "the-code", "state": "forged"})
+    with pytest.raises(SystemExit, match="state does not match"):
+        auth.login()
+    assert not token_endpoint.called
+    assert not token_file.exists()
+
+
+def test_login_reports_denied_access(token_endpoint, redirect_uri, monkeypatch):
+    fake_browser(monkeypatch, lambda p: {"error": "access_denied", "state": p["state"]})
+    with pytest.raises(SystemExit, match="access_denied"):
+        auth.login()
+    assert not token_endpoint.called
+
+
+@pytest.mark.parametrize("field", ["APP_ID", "APP_SECRET"])
+def test_login_needs_app_credentials(field, monkeypatch):
+    monkeypatch.setattr(config, field, "")
+    monkeypatch.setattr(auth.webbrowser, "open", lambda url: pytest.fail("must not open the browser"))
+    with pytest.raises(SystemExit, match="PINTEREST_APP_ID and PINTEREST_APP_SECRET"):
+        auth.login()
