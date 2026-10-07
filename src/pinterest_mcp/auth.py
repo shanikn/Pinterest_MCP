@@ -79,6 +79,33 @@ def refresh(refresh_token: str) -> dict:
     })
 
 
+REFRESH_MARGIN = 60  # seconds: refresh an access token this close to expiry instead of risking a 401
+LOGIN_HINT = "Run `uv run pinterest-mcp-login` in the Pinterest_MCP folder to log in again."
+
+
+class AuthError(Exception):
+    """There is no usable Pinterest login; the user has to run pinterest-mcp-login."""
+
+
+def get_access_token() -> str:
+    """A valid access token, refreshing it first if it expires within REFRESH_MARGIN seconds."""
+    tokens = load_tokens()
+    if tokens is None:
+        raise AuthError(f"Not logged in to Pinterest. {LOGIN_HINT}")
+    now = time.time()
+    if tokens["expires_at"] - now > REFRESH_MARGIN:
+        return tokens["access_token"]
+    if not tokens.get("refresh_token") or tokens["refresh_expires_at"] <= now:
+        raise AuthError(f"The Pinterest login has expired. {LOGIN_HINT}")
+    try:
+        return refresh(tokens["refresh_token"])["access_token"]
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code >= 500:
+            raise
+        # e.g. the user revoked the app's access on Pinterest
+        raise AuthError(f"Pinterest refused the saved login ({exc.response.status_code}). {LOGIN_HINT}") from exc
+
+
 LOGIN_TIMEOUT = 300  # seconds to wait for the browser to come back from Pinterest
 
 

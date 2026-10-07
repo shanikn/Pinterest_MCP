@@ -1,6 +1,8 @@
 import base64
+import json
 import socket
 import threading
+import time
 import urllib.error
 import urllib.request
 from urllib.parse import parse_qsl, urlencode, urlsplit
@@ -138,3 +140,48 @@ def test_login_needs_app_credentials(field, monkeypatch):
     monkeypatch.setattr(auth.webbrowser, "open", lambda url: pytest.fail("must not open the browser"))
     with pytest.raises(SystemExit, match="PINTEREST_APP_ID and PINTEREST_APP_SECRET"):
         auth.login()
+
+
+# --- get_access_token ---
+
+
+def write_tokens(token_file, expires_in, refresh_expires_in=31536000, refresh_token="refresh-1"):
+    now = time.time()
+    token_file.parent.mkdir(parents=True, exist_ok=True)
+    token_file.write_text(json.dumps({
+        "access_token": "access-1", "refresh_token": refresh_token,
+        "expires_at": now + expires_in, "refresh_expires_at": now + refresh_expires_in, "scope": "",
+    }))
+
+
+def test_access_token_used_while_valid(token_endpoint, token_file):
+    write_tokens(token_file, expires_in=3600)
+    assert auth.get_access_token() == "access-1"
+    assert not token_endpoint.called
+
+
+def test_access_token_refreshed_near_expiry(token_endpoint, token_file):
+    write_tokens(token_file, expires_in=30)
+    token_endpoint.mock(return_value=httpx.Response(200, json={**TOKEN_REPLY, "access_token": "access-2"}))
+    assert auth.get_access_token() == "access-2"
+    assert sent_form(token_endpoint)["refresh_token"] == "refresh-1"
+    assert auth.load_tokens()["access_token"] == "access-2"
+
+
+def test_no_tokens_says_to_log_in():
+    with pytest.raises(auth.AuthError, match="Not logged in.*pinterest-mcp-login"):
+        auth.get_access_token()
+
+
+def test_expired_refresh_token_says_to_log_in(token_endpoint, token_file):
+    write_tokens(token_file, expires_in=-10, refresh_expires_in=-10)
+    with pytest.raises(auth.AuthError, match="expired.*pinterest-mcp-login"):
+        auth.get_access_token()
+    assert not token_endpoint.called
+
+
+def test_refused_refresh_says_to_log_in(token_endpoint, token_file):
+    write_tokens(token_file, expires_in=-10)
+    token_endpoint.mock(return_value=httpx.Response(400, json={"code": 1, "message": "Invalid refresh token"}))
+    with pytest.raises(auth.AuthError, match="refused.*pinterest-mcp-login"):
+        auth.get_access_token()
