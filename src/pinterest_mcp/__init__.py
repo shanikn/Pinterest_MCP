@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from pinterest-mcp!")
+from pinterest_mcp.server import main
