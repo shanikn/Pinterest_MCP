@@ -1,5 +1,6 @@
 import json
 import time
+from urllib.parse import urlencode
 
 from pinterest_mcp import config
 
@@ -22,3 +23,15 @@ def load_tokens() -> dict | None:
     if not config.TOKEN_FILE.exists():
         return None
     return json.loads(config.TOKEN_FILE.read_text())
+
+
+def build_auth_url(state: str) -> str:
+    params = {
+        "client_id": config.APP_ID,
+        "redirect_uri": config.REDIRECT_URI,
+        "response_type": "code",
+        "scope": ",".join(config.SCOPES),
+        "state": state,
+    }
+    query = urlencode(params)
+    return f"{config.AUTH_URL}?{query}"
