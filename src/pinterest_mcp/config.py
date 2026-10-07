@@ -6,7 +6,8 @@ load_dotenv()
 
 APP_ID = os.environ.get("PINTEREST_APP_ID", default="")
 APP_SECRET = os.environ.get("PINTEREST_APP_SECRET", default="")
-REDIRECT_URI = os.environ.get("PINTEREST_REDIRECT_URI", default="http://localhost:8085/callback")
+# `or`, not a default: .env.example leaves it empty, and an empty value should still mean the default
+REDIRECT_URI = os.environ.get("PINTEREST_REDIRECT_URI") or "http://localhost:8085/callback"
 SCOPES = ["boards:read", "pins:read", "user_accounts:read",
           # GET /search/pins also needs the secret scopes
           "boards:read_secret", "pins:read_secret"]
