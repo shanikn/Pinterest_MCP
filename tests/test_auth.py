@@ -54,3 +54,14 @@ def test_error_reply_saves_nothing(token_endpoint, token_file):
     with pytest.raises(httpx.HTTPStatusError):
         auth.exchange_code("bad-code")
     assert not token_file.exists()
+
+
+def test_refresh_without_new_refresh_token_keeps_the_old_one(token_endpoint):
+    token_endpoint.mock(return_value=httpx.Response(200, json=TOKEN_REPLY))
+    first = auth.exchange_code("the-code")
+    reply = {"access_token": "access-2", "expires_in": 2592000, "scope": "boards:read,pins:read"}
+    token_endpoint.mock(return_value=httpx.Response(200, json=reply))
+    tokens = auth.refresh("refresh-1")
+    assert tokens["access_token"] == "access-2"
+    assert tokens["refresh_token"] == "refresh-1"
+    assert tokens["refresh_expires_at"] == first["refresh_expires_at"]

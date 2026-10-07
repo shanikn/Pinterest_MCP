@@ -8,15 +8,22 @@ from pinterest_mcp import config
 
 
 def save_tokens(response: dict) -> None:
-    """Store Pinterest's token response, converting lifetimes to absolute expiry times"""
+    """Store Pinterest's token response, converting lifetimes to absolute expiry times.
+
+    A refresh reply may leave out refresh_token; then the old refresh token and its expiry are kept."""
     now = time.time()
     tokens = {
         "access_token": response["access_token"],
-        "refresh_token": response["refresh_token"],
         "expires_at": now + response["expires_in"],
-        "refresh_expires_at": now + response["refresh_token_expires_in"],
         "scope": response.get("scope", ""),
     }
+    if "refresh_token" in response:
+        tokens["refresh_token"] = response["refresh_token"]
+        tokens["refresh_expires_at"] = now + response["refresh_token_expires_in"]
+    else:
+        old = load_tokens() or {}
+        tokens["refresh_token"] = old.get("refresh_token")
+        tokens["refresh_expires_at"] = old.get("refresh_expires_at", 0)
     config.TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
     config.TOKEN_FILE.write_text(json.dumps(tokens, indent=2))
 
